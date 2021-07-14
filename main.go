@@ -17,14 +17,14 @@ const (
 	// name of the service
 	name        = "igpu-debug"
 	description = "Debug service for igpu"
+	cronString  = "*/5 * * * * *"
+	workdir     = "/var/log/igpu-debug"
+	sourceFile  = "/dev/urandom"
+	bufferSize  = 64
 )
 
 var quit chan bool
 var stdlog, errlog *log.Logger
-
-var workdir string = "/var/log/igpu-debug"
-var sourceFile = "/dev/urandom"
-var bufferSize = 64
 
 // Service is the daemon service struct
 type Service struct {
@@ -35,7 +35,33 @@ func igpuLogRotator() {
 	stdlog.Println("Rotator started")
 	quit <- true
 	go logWorker()
-	//TODO: clean logs
+
+	logFiles, err := os.Open(workdir)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer logFiles.Close()
+	files, err := logFiles.Readdir(0)
+	if err != nil {
+		errlog.Println("Error clean files: ", err)
+		return
+	}
+
+	timeold := time.Now().Unix() - 30
+	for _, v := range files {
+		if !v.IsDir() {
+			fmt.Println(v.Name(), v.IsDir(), v.ModTime(), timeold)
+			if timeold > v.ModTime().Unix() {
+				fullPath := fmt.Sprintf("%s/%s", workdir, v.Name())
+				stdlog.Println("Remove file ", fullPath)
+				err = os.Remove(fullPath)
+				if err != nil {
+					errlog.Println("Error remove file: ", fullPath, err)
+				}
+			}
+		}
+	}
 }
 
 func logWorker() {
@@ -107,7 +133,7 @@ func (service *Service) Manage() (string, error) {
 	// Create a new cron manager
 	c := cron.New()
 	// Run makefile every min
-	err := c.AddFunc("* */5 * * * *", igpuLogRotator)
+	err := c.AddFunc(cronString, igpuLogRotator)
 	if err != nil {
 		errlog.Println("Error create cron  igpuLogRotator: ", err)
 		return "", err

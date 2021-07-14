@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"log"
@@ -25,54 +24,57 @@ var stdlog, errlog *log.Logger
 
 var workdir string = "/var/log/igpu-debug"
 var sourceFile = "/dev/urandom"
-var source io.Reader
+var bufferSize = 64
 
 // Service is the daemon service struct
 type Service struct {
 	daemon.Daemon
 }
 
-func makeFile() (*os.File, error) {
-	// create a simple file (current time).txt
-	f, err := os.OpenFile(fmt.Sprintf("%s/%s.txt", workdir, time.Now().Format(time.RFC3339)),
+func igpuLogRotator() {
+	stdlog.Println("Rotator started")
+	quit <- true
+	go logWorker()
+	//TODO: clean logs
+}
+
+func logWorker() {
+	stdlog.Println("logWorker start ")
+	source, err := os.Open(sourceFile)
+	if err != nil {
+		errlog.Println("Error open "+sourceFile+": ", err)
+		os.Exit(1)
+	}
+	defer source.Close()
+
+	fileName := fmt.Sprintf("%s/%s.txt", workdir, time.Now().Format(time.RFC3339))
+	dest, err := os.OpenFile(fileName,
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 
 	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	return f, nil
-}
-
-func igpuLogRotator() {
-	dest, err := makeFile()
-	if err != nil {
-		errlog.Println("Error: ", err)
+		errlog.Println("Error open "+fileName+": ", err)
 		os.Exit(1)
 	}
-	quit <- true
-	go logWorker(source, dest)
-}
+	defer dest.Close()
 
-func logWorker(source io.Reader, destination io.Writer) {
-	scanner := bufio.NewScanner(source)
-	for scanner.Scan() {
+	for {
 		select {
 		case <-quit:
-			if _, err := destination.Write(scanner.Bytes()); err != nil {
-				log.Println(err)
-			}
+			stdlog.Println("Got quit")
 			return
 		default:
-			if _, err := destination.Write(scanner.Bytes()); err != nil {
-				log.Println(err)
+			b := make([]byte, bufferSize)
+			_, err := source.Read(b)
+			if err == io.EOF {
+				break
+			} else if err != nil {
+				errlog.Println("Error get data from source: ", err)
+			} else {
+				if _, err := dest.Write(b); err != nil {
+					errlog.Println("Error write data to file: ", err)
+				}
 			}
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		errlog.Println("Error: ", err)
-		os.Exit(1)
 	}
 }
 
@@ -105,20 +107,14 @@ func (service *Service) Manage() (string, error) {
 	// Create a new cron manager
 	c := cron.New()
 	// Run makefile every min
-	err := c.AddFunc("* * * * * *", igpuLogRotator)
+	err := c.AddFunc("* */5 * * * *", igpuLogRotator)
 	if err != nil {
 		errlog.Println("Error create cron  igpuLogRotator: ", err)
 		return "", err
 	}
 	c.Start()
-
-	dest, err := makeFile()
-	if err != nil {
-		errlog.Println("Error create logfile: ", err)
-		return "", err
-	}
-
-	go logWorker(source, dest)
+	go logWorker()
+	stdlog.Println("First started")
 	killSignal := <-interrupt
 	stdlog.Println("Got signal:", killSignal)
 	return "Service exited", nil
@@ -127,17 +123,13 @@ func (service *Service) Manage() (string, error) {
 func init() {
 	stdlog = log.New(os.Stdout, "", log.Ldate|log.Ltime)
 	errlog = log.New(os.Stderr, "", log.Ldate|log.Ltime)
-	source, err := os.Open(sourceFile)
-	if err != nil {
-		errlog.Println("Error open "+sourceFile+": ", err)
-		os.Exit(1)
-	}
-	defer source.Close()
+
 }
 
 func main() {
 	quit = make(chan bool)
 	defer close(quit)
+
 	srv, err := daemon.New(name, description, daemon.SystemDaemon)
 	if err != nil {
 		errlog.Println("Error: ", err)

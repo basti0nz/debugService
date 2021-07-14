@@ -1,7 +1,5 @@
 [Unit]
-Description={{.Description}}
-Requires={{.Dependencies}}
-After={{.Dependencies}}
+Description=igpu debug service
 
 [Service]
 PIDFile=/var/run/{{.Name}}.pid

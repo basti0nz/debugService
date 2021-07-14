@@ -13,6 +13,7 @@
 *.iml
 
 dist/*
+igpu-debug-0.1-linux-amd64
 
 
 # Output of the go coverage tool, specifically when used with LiteIDE

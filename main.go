@@ -14,13 +14,21 @@ import (
 )
 
 const (
-	// name of the service
 	name        = "igpu-debug"
 	description = "Debug service for igpu"
-	cronString  = "*/5 * * * * *"
-	workdir     = "/var/log/igpu-debug"
-	sourceFile  = "/dev/urandom"
-	bufferSize  = 64
+
+	workdir    = "/var/log/igpu-debug"
+	bufferSize = 64
+
+	// DEV const
+	//sourceFile         = "/dev/urandom"
+	//cronString         = "*/10 * * * * *"
+	//DeleteAfterSeconds = 20
+
+	//PROD const
+	sourceFile         = "/sys/kernel/debug/tracing/trace_pipe"
+	cronString         = "0 */10 * * * *"
+	DeleteAfterSeconds = 1200
 )
 
 var quit chan bool
@@ -48,11 +56,10 @@ func igpuLogRotator() {
 		return
 	}
 
-	timeold := time.Now().Unix() - 30
+	time2old := time.Now().Unix() - DeleteAfterSeconds
 	for _, v := range files {
 		if !v.IsDir() {
-			fmt.Println(v.Name(), v.IsDir(), v.ModTime(), timeold)
-			if timeold > v.ModTime().Unix() {
+			if time2old > v.ModTime().Unix() {
 				fullPath := fmt.Sprintf("%s/%s", workdir, v.Name())
 				stdlog.Println("Remove file ", fullPath)
 				err = os.Remove(fullPath)
@@ -62,10 +69,11 @@ func igpuLogRotator() {
 			}
 		}
 	}
+	stdlog.Println("Rotator stoped")
 }
 
 func logWorker() {
-	stdlog.Println("logWorker start ")
+	stdlog.Println("logWorker started ")
 	source, err := os.Open(sourceFile)
 	if err != nil {
 		errlog.Println("Error open "+sourceFile+": ", err)
@@ -76,7 +84,6 @@ func logWorker() {
 	fileName := fmt.Sprintf("%s/%s.txt", workdir, time.Now().Format(time.RFC3339))
 	dest, err := os.OpenFile(fileName,
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-
 	if err != nil {
 		errlog.Println("Error open "+fileName+": ", err)
 		os.Exit(1)
@@ -86,7 +93,7 @@ func logWorker() {
 	for {
 		select {
 		case <-quit:
-			stdlog.Println("Got quit")
+			stdlog.Println("logWorker stoped ")
 			return
 		default:
 			b := make([]byte, bufferSize)
@@ -140,7 +147,6 @@ func (service *Service) Manage() (string, error) {
 	}
 	c.Start()
 	go logWorker()
-	stdlog.Println("First started")
 	killSignal := <-interrupt
 	stdlog.Println("Got signal:", killSignal)
 	return "Service exited", nil
@@ -155,6 +161,14 @@ func init() {
 func main() {
 	quit = make(chan bool)
 	defer close(quit)
+
+	if _, err := os.Stat(workdir); os.IsNotExist(err) {
+		err := os.Mkdir(workdir, os.ModeDir)
+		if err != nil {
+			errlog.Println("Error: ", err)
+			os.Exit(1)
+		}
+	}
 
 	srv, err := daemon.New(name, description, daemon.SystemDaemon)
 	if err != nil {

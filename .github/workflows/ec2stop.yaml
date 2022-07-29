@@ -1,0 +1,9 @@
+name: stopColumbusDev
+on: workflow_dispatch
+jobs:
+  stop-instance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stop AWS EC2
+        run: |
+          echo "aws ec2 start-instances --instance-ids "
